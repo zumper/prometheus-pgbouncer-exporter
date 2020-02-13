@@ -11,6 +11,26 @@ from .config import Config
 from .collector import PgbouncersMetricsCollector
 
 
+def read_config_file(config_file):
+    # Read config file
+    config = Config()
+    try:
+        config.read(config_file)
+        logging.getLogger().info("Config file successfully read from {file}".format(file=args.config))
+    except Exception as error:
+        logging.getLogger().fatal("Unable to read config file from {file}".format(file=args.config), extra={"exception": str(error)})
+        raise Exception('Cannot read config file')
+
+    # Validate config
+    try:
+        config.validate()
+    except Exception as error:
+        logging.getLogger().fatal("The config file {file} is invalid: {error}".format(file=args.config, error=str(error)))
+        raise Exception('Invalid config file')
+
+    return config
+
+
 def main():
     shutdown = False
 
@@ -31,6 +51,9 @@ def main():
 
     # Register signal handler
     def _on_sighup(signal, frame):
+        logging.getLogger().info("Received SIGHUP - Reloading pgbouncer hosts")
+        config = read_config_file(args.config)
+        pgbcollector.update(config.getPgbouncers())
         if args.log_file is not "stdout":
             logging.getLogger().info("Received SIGHUP - log file is closing")
             logHandler.close()
@@ -46,23 +69,11 @@ def main():
     signal.signal(signal.SIGTERM, _on_sigterm)
 
     # Read config file
-    config = Config()
-    try:
-        config.read(args.config)
-        logging.getLogger().info("Config file successfully read from {file}".format(file=args.config))
-    except Exception as error:
-        logging.getLogger().fatal("Unable to read config file from {file}".format(file=args.config), extra={"exception": str(error)})
-        sys.exit(1)
-
-    # Validate config
-    try:
-        config.validate()
-    except Exception as error:
-        logging.getLogger().fatal("The config file {file} is invalid: {error}".format(file=args.config, error=str(error)))
-        sys.exit(1)
+    config = read_config_file(args.config)
 
     # Register our custom collector
-    REGISTRY.register(PgbouncersMetricsCollector(config.getPgbouncers()))
+    pgbcollector = PgbouncersMetricsCollector(config.getPgbouncers())
+    REGISTRY.register(pgbcollector)
 
     # Start server
     start_http_server(config.getExporterPort(), config.getExporterHost())
